@@ -1,6 +1,13 @@
 # switch2 controllers
 An app to use switch 2 joycons on pc as gamepad and mouse
 
+### Usage
+
+No need to pair the controller in the bluetooth settings.
+
+Simply launch the app, and do what it says.
+
+If you already paired the joycons in windows bluetooth settings, remove it before attempting to use it with this app.
 
 ### Using as a mouse
 
