@@ -3,7 +3,8 @@
 This fork of `switch2-controllers` is optimized for Windows 10 users and offers two different button mapping versions to suit your preference:
 
 * **Windows 10 Compatibility Fix:** Resolved the `AttributeError: property is not available in this version of Windows` crash. This app now runs natively on Windows 10 (22H2 and above).
-* **Two Layout Options:** * **Nintendo Layout Version:** Swaps A/B and X/Y. Pressing the physical "A" button on your Joy-Con (right position) triggers the "A" input on PC. Perfect for those who want the labels to match.
+* **Two Layout Options:**
+    * **Nintendo Layout Version:** Swaps A/B and X/Y. Pressing the physical "A" button on your Joy-Con (right position) triggers the "A" input on PC. Perfect for those who want the labels to match.
     * **Xbox/Standard Layout Version:** Keeps the standard PC positioning. Pressing the physical "A" button (right position) triggers the "B" input on PC (matching the standard Xbox controller layout).
 * **Standalone Executable (.exe):** Fully packed with all dependencies (including `vgamepad` DLLs and `resources`). No Python installation required.
 
