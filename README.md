@@ -1,4 +1,4 @@
-## 🌟 Fork Features (Windows 10 Fix & Nintendo Layout)
+## Fork Features (Windows 10 Fix & Nintendo Layout)
 
 This is a modified fork of the original `switch2-controllers`. It includes the following quality-of-life improvements:
 
@@ -6,7 +6,7 @@ This is a modified fork of the original `switch2-controllers`. It includes the f
 * **True Nintendo Button Layout:** Swapped the A/B and X/Y button mappings in the virtual controller configuration. It now matches the physical Nintendo Switch layout perfectly, rather than defaulting to the Xbox layout.
 * **Standalone Executable (.exe) Available:** Packed with PyInstaller (including all hidden dependencies like `vgamepad` and `resources`). You can download the ready-to-use `.exe` directly from the **[Releases]** page—no Python or `pip install` required!
 
-### 🚀 How to use the compiled version
+### How to use the compiled version
 1. Download the executable file from the **Releases** section.
 2. Ensure you have the [Nefarius ViGEmBus driver](https://github.com/nefarius/ViGEmBus/releases) installed on your PC.
 3. Simply double-click the `.exe` to run. *(Note: Do not pair the controllers in the Windows Bluetooth settings; let the app handle the connection.)*
