@@ -38,7 +38,7 @@ SWITCH_BUTTONS = {
 }
 
 BACK_BUTTON_OPTIONS = [
-    "None", "Gyro", "CAPT", "C", "PSTPAD_L", "PSTPAD_R", 
+    "None", "Gyro", "Calibration", "CAPT", "C", "PSTPAD_L", "PSTPAD_R", 
     "A", "B", "X", "Y", "L", "R", "ZL", "ZR", 
     "MINUS", "PLUS", "L_STK", "R_STK", "UP", "DOWN", "LEFT", "RIGHT"
 ]
@@ -197,6 +197,13 @@ class Config:
         self.simulation_mode = config.get("simulation_mode", "Xbox")
         self.open_when_startup = config.get("open_when_startup", False)
         self.start_minimized = config.get("start_minimized", False)
+        self.stabilized_gyro = config.get("stabilized_gyro", False)
+        self.steam_roll_compensation = config.get("steam_roll_compensation", False)
+        val = config.get("virtual_gyro_soft_deadzone", 2.0)
+        if isinstance(val, bool):
+            self.virtual_gyro_soft_deadzone = 2.0 if val else 0.0
+        else:
+            self.virtual_gyro_soft_deadzone = float(val)
 
         logger.info(f"Config successfully loaded from {self.config_file_path}")
         
@@ -212,6 +219,9 @@ class Config:
             data['simulation_mode'] = self.simulation_mode
             data['open_when_startup'] = self.open_when_startup
             data['start_minimized'] = self.start_minimized
+            data['stabilized_gyro'] = self.stabilized_gyro
+            data['steam_roll_compensation'] = self.steam_roll_compensation
+            data['virtual_gyro_soft_deadzone'] = self.virtual_gyro_soft_deadzone
             data['abxy_mode'] = self.abxy_mode
             data['gl_mapping'] = self.gl_mapping
             data['gr_mapping'] = self.gr_mapping

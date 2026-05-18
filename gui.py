@@ -558,6 +558,81 @@ class PlayerInfoBlock:
         self.vibrate_frame.place(relx=0.96, rely=0.5, anchor=tk.E)
         self.player_led_label.config(image=self.player_leds[virtualController.player_number])
 
+class CalibrationOverlay:
+    def __init__(self, root):
+        self.root = root
+        self.window = None
+        self.lbl_title = None
+        self.lbl_msg = None
+        self.close_timer = None
+
+    def update(self, title, message):
+        # We must run this on the main thread. If we are called from a background thread,
+        # we schedule it via self.root.after
+        if threading.current_thread() != threading.main_thread():
+            self.root.after(0, self.update, title, message)
+            return
+            
+        if self.window is None or not self.window.winfo_exists():
+            self._create_window()
+            
+        # Highlight colors depending on status
+        if "started" in message.lower() or "progress" in message.lower() or "stationary" in message.lower():
+            color = "#ff9f0a" # Orange
+        elif "complete" in message.lower() or "success" in message.lower():
+            color = "#30d158" # Green
+        elif "cancelled" in message.lower():
+            color = "#ff453a" # Red
+        else:
+            color = "#0a84ff" # Blue
+            
+        self.lbl_title.config(text=title, fg=color)
+        self.lbl_msg.config(text=message)
+        
+        # Cancel any pending auto-close timer
+        if self.close_timer:
+            self.root.after_cancel(self.close_timer)
+            self.close_timer = None
+            
+        # Auto close after 3 seconds for final completion / cancellation
+        # We do not auto-close on Gyro completion because it has instructions waiting for Mag start
+        is_final_complete = "magnetometer calibration complete" in message.lower()
+        is_cancelled = "cancelled" in message.lower()
+        if is_final_complete or is_cancelled:
+            self.close_timer = self.root.after(3000, self.close)
+
+    def _create_window(self):
+        self.window = tk.Toplevel(self.root)
+        self.window.overrideredirect(True)
+        self.window.attributes("-topmost", True)
+        self.window.attributes("-alpha", 0.95)
+        self.window.configure(bg="#1c1c1e")
+        
+        screen_width = self.window.winfo_screenwidth()
+        screen_height = self.window.winfo_screenheight()
+        w, h = 500, 110
+        x = screen_width - w - 30
+        y = screen_height - h - 70 # Bottom-right, staying above the taskbar
+        self.window.geometry(f"{w}x{h}+{x}+{y}")
+        
+        frame = tk.Frame(self.window, bg="#1c1c1e", highlightbackground="#3a3a3c", highlightthickness=2, bd=0)
+        frame.pack(fill="both", expand=True)
+        
+        self.lbl_title = tk.Label(frame, text="Switch 2 Controller", fg="#0a84ff", bg="#1c1c1e", font=("Segoe UI", 12, "bold"))
+        self.lbl_title.pack(anchor="w", padx=20, pady=(12, 2))
+        
+        self.lbl_msg = tk.Label(frame, text="", fg="#ffffff", bg="#1c1c1e", font=("Segoe UI", 11), justify="left", wraplength=460)
+        self.lbl_msg.pack(anchor="w", padx=20, pady=(0, 12))
+
+    def close(self):
+        if threading.current_thread() != threading.main_thread():
+            self.root.after(0, self.close)
+            return
+            
+        if self.window and self.window.winfo_exists():
+            self.window.destroy()
+        self.window = None
+
 class ControllerWindow:
     def __init__(self):
         self.root = None
@@ -570,9 +645,19 @@ class ControllerWindow:
         self.power_listener = PowerListener(self.handle_power_event)
 
     def init_interface(self):
-        try: ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('tommy.switch2.controllers.0.5.1')
+        try: ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Switch 2 Controllers')
         except: pass
         self.root = tk.Tk()
+        
+        self.calibration_overlay = CalibrationOverlay(self.root)
+        import utils
+        utils.show_notification_callback = self.calibration_overlay.update
+
+        def safe_ui_update():
+            if getattr(self, 'discoverer_callback', None):
+                self.discoverer_callback(list(VIRTUAL_CONTROLLERS))
+        utils.force_ui_update_callback = safe_ui_update
+
         if CONFIG.start_minimized:
             self.root.withdraw()
         try:
@@ -581,7 +666,7 @@ class ControllerWindow:
         except: pass
         self.root.title("Switch2 Controllers")
         self.root.geometry("1000x580+50+50")
-        self.root.minsize(1060, 690)
+        self.root.minsize(1040, 760)
         self.root.config(bg=background_color, padx=10, pady=10)
         
         # Set title bar color to match background
@@ -644,6 +729,7 @@ class ControllerWindow:
         self.pairing_hint_image = tk.PhotoImage(file=get_resource("images/pairing_hint.png"))
 
         self.init_settings_panel()
+        self.init_compensation_panel()
         self.init_gyro_settings_panel()
 
         # New centralized button row above Gyro Settings
@@ -672,8 +758,42 @@ class ControllerWindow:
 
         self.update([None])
 
+    def init_compensation_panel(self):
+        self.comp_frame = tk.LabelFrame(self.root, text=" Gyro Passthrough ", bg=background_color, fg=text_color, font=("Arial", 12, "bold"), padx=10, pady=10)
+        self.comp_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=5)
+        
+        tk.Label(self.comp_frame, text="9-axis Assist:", bg=background_color, fg=text_color, font=("Arial", 12, "bold")).grid(row=0, column=0, padx=5, sticky="e")
+        self.stabilized_gyro_switch = ToggleSwitch(self.comp_frame, labels=["ON", "OFF"], values=[True, False], initial_value=getattr(CONFIG, "stabilized_gyro", False), command=self.update_stabilized_gyro_setting, bg_color=background_color)
+        self.stabilized_gyro_switch.grid(row=0, column=1, columnspan=2, padx=5, sticky="w")
+        tk.Label(self.comp_frame, text="Horizon Lock:", bg=background_color, fg=text_color, font=("Arial", 12, "bold")).grid(row=0, column=3, padx=(20, 5), sticky="e")
+        self.steam_roll_comp_switch = ToggleSwitch(self.comp_frame, labels=["ON", "OFF"], values=[True, False], initial_value=getattr(CONFIG, "steam_roll_compensation", False), command=self.update_steam_roll_comp_setting, bg_color=background_color)
+        self.steam_roll_comp_switch.grid(row=0, column=4, columnspan=2, padx=5, sticky="w")
+
+        tk.Label(self.comp_frame, text="Deadzone:", bg=background_color, fg=text_color, font=("Arial", 12, "bold")).grid(row=0, column=6, padx=(20, 5), sticky="e")
+        self.deadzone_scale = tk.Scale(
+            self.comp_frame,
+            from_=0.0,
+            to=5.0,
+            resolution=0.5,
+            orient=tk.HORIZONTAL,
+            length=120,
+            bg=background_color,
+            fg=text_color,
+            troughcolor=button_gray,
+            activebackground=highlight_color,
+            highlightthickness=0,
+            bd=0,
+            sliderrelief=tk.FLAT,
+            sliderlength=15,
+            width=15,
+            font=("Arial", 12, "bold"),
+            command=self.update_virtual_gyro_soft_deadzone_setting
+        )
+        self.deadzone_scale.set(getattr(CONFIG, "virtual_gyro_soft_deadzone", 2.0))
+        self.deadzone_scale.grid(row=0, column=7, columnspan=2, padx=5, sticky="w")
+
     def init_gyro_settings_panel(self):
-        self.gyro_frame = tk.LabelFrame(self.root, text=" Gyro Settings ", bg=background_color, fg=text_color, font=("Arial", 12, "bold"), padx=10, pady=10)
+        self.gyro_frame = tk.LabelFrame(self.root, text=" Built-in Gyro ", bg=background_color, fg=text_color, font=("Arial", 12, "bold"), padx=10, pady=10)
         self.gyro_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=5)
         tk.Label(self.gyro_frame, text="Mode:", bg=background_color, fg=text_color, font=("Arial", 12, "bold")).grid(row=0, column=0, padx=5, sticky="e")
         self.gyro_mode_switch = ToggleSwitch(self.gyro_frame, labels=["9-Axis", "6-Axis", "Steering"], values=["World", "Yaw", "Roll"], initial_value=CONFIG.gyro_mode, command=self.update_mode_setting, bg_color=background_color)
@@ -723,6 +843,37 @@ class ControllerWindow:
         CONFIG.gyro_mode = val
         self.on_gyro_setting_changed()
 
+    def update_stabilized_gyro_setting(self, val):
+        CONFIG.stabilized_gyro = val
+        try:
+            with open(CONFIG.config_file_path, 'r', encoding='utf-8') as f: data = yaml.safe_load(f) or {}
+            data['stabilized_gyro'] = val
+            with open(CONFIG.config_file_path, 'w', encoding='utf-8') as f: yaml.dump(data, f, default_flow_style=False)
+            logger.info(f"9-Axis Stabilization (for 6-Axis): {val}")
+        except Exception as e:
+            logger.error(f"Failed to save stabilized gyro setting: {e}")
+
+    def update_steam_roll_comp_setting(self, val):
+        CONFIG.steam_roll_compensation = val
+        try:
+            with open(CONFIG.config_file_path, 'r', encoding='utf-8') as f: data = yaml.safe_load(f) or {}
+            data['steam_roll_compensation'] = val
+            with open(CONFIG.config_file_path, 'w', encoding='utf-8') as f: yaml.dump(data, f, default_flow_style=False)
+            logger.info(f"Roll Compensation: {val}")
+        except Exception as e:
+            logger.error(f"Failed to save steam roll compensation setting: {e}")
+
+    def update_virtual_gyro_soft_deadzone_setting(self, val):
+        val = float(val)
+        CONFIG.virtual_gyro_soft_deadzone = val
+        try:
+            with open(CONFIG.config_file_path, 'r', encoding='utf-8') as f: data = yaml.safe_load(f) or {}
+            data['virtual_gyro_soft_deadzone'] = val
+            with open(CONFIG.config_file_path, 'w', encoding='utf-8') as f: yaml.dump(data, f, default_flow_style=False)
+            logger.info(f"Third-Party Gyro Deadzone: {val}")
+        except Exception as e:
+            logger.error(f"Failed to save virtual gyro soft deadzone setting: {e}")
+
     def update_mouse_setting(self, val):
         CONFIG.mouse_config.enabled = val
         try:
@@ -762,12 +913,34 @@ class ControllerWindow:
 
     def on_calibrate_clicked(self):
         if not hasattr(self, 'current_controllers') or self.no_controllers: return
-        for vc in self.current_controllers:
-            if vc is not None: vc.start_calibration()
-        self.calibrate_btn.config(state=tk.DISABLED, text="Calibrating (2..)", fg="#ffffff", disabledforeground="#ffffff")
-        self.calib_frame.config(bg=highlight_color); self.calibrate_btn.pack(padx=2, pady=2)
-        self.root.after(1000, lambda: self.calibrate_btn.config(text="Calibrating (1..)", fg="#ffffff", disabledforeground="#ffffff"))
-        self.root.after(2000, lambda: (self.calibrate_btn.config(state=tk.NORMAL, text="Calibration Done"), self.calib_frame.config(bg=button_gray), self.calibrate_btn.pack(padx=2, pady=2)))
+        
+        self.calibrate_btn.config(state=tk.DISABLED, text="Starting in 3..", fg="#ffffff", disabledforeground="#ffffff")
+        self.calib_frame.config(bg=highlight_color)
+        self.calibrate_btn.pack(padx=2, pady=2)
+        
+        self.root.after(1000, lambda: self.calibrate_btn.config(text="Starting in 2..", fg="#ffffff", disabledforeground="#ffffff"))
+        self.root.after(2000, lambda: self.calibrate_btn.config(text="Starting in 1..", fg="#ffffff", disabledforeground="#ffffff"))
+        
+        def start_actual_calibration():
+            for vc in self.current_controllers:
+                if vc is not None: vc.start_calibration()
+                
+            self.calibrate_btn.config(text="Calibrating 5..", fg="#ffffff", disabledforeground="#ffffff")
+            self.calib_frame.config(bg=highlight_color)
+            self.calibrate_btn.pack(padx=2, pady=2)
+            
+            self.root.after(1000, lambda: self.calibrate_btn.config(text="Calibrating 4..", fg="#ffffff", disabledforeground="#ffffff"))
+            self.root.after(2000, lambda: self.calibrate_btn.config(text="Calibrating 3..", fg="#ffffff", disabledforeground="#ffffff"))
+            self.root.after(3000, lambda: self.calibrate_btn.config(text="Calibrating 2..", fg="#ffffff", disabledforeground="#ffffff"))
+            self.root.after(4000, lambda: self.calibrate_btn.config(text="Calibrating 1..", fg="#ffffff", disabledforeground="#ffffff"))
+            
+            self.root.after(5000, lambda: (
+                self.calibrate_btn.config(state=tk.NORMAL, text="Calibration Done"), 
+                self.calib_frame.config(bg=button_gray), 
+                self.calibrate_btn.pack(padx=2, pady=2)
+            ))
+            
+        self.root.after(3000, start_actual_calibration)
 
 
 

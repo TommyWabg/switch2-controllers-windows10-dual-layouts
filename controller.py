@@ -23,7 +23,7 @@ from utils import (
     reverse_bits, signed_looping_difference_16bit, to_hex, decodeu, decodes, 
     convert_mac_string_to_value, vector_normalize, vector_cross, vector_dot,
     quaternion_multiply, quaternion_normalize, quaternion_rotate_vector,
-    quaternion_from_vectors
+    quaternion_from_vectors, show_notification, force_ui_update
 )
 
 logging.basicConfig(
@@ -244,9 +244,17 @@ class Controller:
         self.interp_residual_x = 0.0
         self.interp_residual_y = 0.0
         self.interp_task = None
+        self.virtual_controller = None
         
         self.is_calibrating = False
         self.calibration_end_time = 0
+        
+        self.is_calibration_counting_down = False
+        self.calibration_countdown_end = 0.0
+        self.last_remaining_sec = None
+        self.is_mag_calibration_waiting = False
+        self.back_button_calibration_active = False
+        self.prev_calibration = False
         
         # Set defaults, will load actual calibration offsets after connecting and getting device info
         self.gyro_bias = (0.0, 0.0, 0.0)
@@ -281,6 +289,7 @@ class Controller:
         self.q_world_offset = None 
         self.gyro_moving_envelope = 0.0
         self._suspended = False
+        self.prev_q = None
         
     @property
     def suspended(self):
@@ -309,7 +318,7 @@ class Controller:
 
     def start_calibration(self):
         self.is_calibrating = True
-        self.calibration_end_time = time.perf_counter() + 2.0
+        self.calibration_end_time = time.perf_counter() + 5.0
         self.calibration_samples_gyro = []
         self.calibration_samples_stick = []
         
@@ -336,6 +345,94 @@ class Controller:
         # Store in config
         CONFIG.mag_calibration_data[self.device.address] = list(self.mag_bias)
         CONFIG.save_config()
+
+        # Reset orientation filter state to prevent continuous sensor fusion skew/direction issues
+        ax, ay, az = getattr(self, 'last_accel', (0.0, 16384.0, 0.0))
+        self._reset_orientation_from_accel(ax, ay, az)
+
+    def _handle_calibration_button_pressed(self):
+        vc = getattr(self, 'virtual_controller', None)
+        if vc and len(vc.controllers) == 2:
+            # Find the gyro-active controller in the merged pair
+            gyro_ctrl = None
+            for c in vc.controllers:
+                if getattr(c, 'gyro_active', False):
+                    gyro_ctrl = c
+                    break
+            if not gyro_ctrl:
+                gyro_ctrl = self
+                
+            is_active = (getattr(gyro_ctrl, 'is_calibrating', False) or 
+                         getattr(gyro_ctrl, 'is_mag_calibrating', False) or 
+                         getattr(gyro_ctrl, 'is_calibration_counting_down', False) or
+                         getattr(gyro_ctrl, 'is_mag_calibration_waiting', False))
+                         
+            if is_active:
+                if getattr(gyro_ctrl, 'is_mag_calibration_waiting', False):
+                    # Start Mag Calibration ONLY on the gyro active controller!
+                    gyro_ctrl.is_mag_calibration_waiting = False
+                    gyro_ctrl.start_mag_calibration()
+                    show_notification("Switch 2 Controller", "Magnetometer calibration started. Please rotate the controller in all directions (figure-8 pattern), and press the Calibration button again to end.")
+                elif getattr(gyro_ctrl, 'is_mag_calibrating', False):
+                    # Stop Mag Calibration ONLY on the gyro active controller!
+                    gyro_ctrl.stop_mag_calibration()
+                    # Clear states on all controllers in the merged pair
+                    for c in vc.controllers:
+                        c.back_button_calibration_active = False
+                        c.is_calibration_counting_down = False
+                        c.is_calibrating = False
+                        c.is_mag_calibration_waiting = False
+                        c.is_mag_calibrating = False
+                    show_notification("Switch 2 Controller", "Magnetometer calibration complete! Calibration data saved successfully.")
+                else:
+                    # Cancel active countdown/gyro calibration on ALL controllers in the merged pair
+                    for c in vc.controllers:
+                        c.is_calibration_counting_down = False
+                        c.is_calibrating = False
+                        c.is_mag_calibration_waiting = False
+                        c.is_mag_calibrating = False
+                        c.back_button_calibration_active = False
+                    show_notification("Switch 2 Controller", "Calibration cancelled.")
+            else:
+                # Start Gyro countdown on BOTH controllers!
+                for c in vc.controllers:
+                    c.back_button_calibration_active = True
+                    c.is_calibration_counting_down = True
+                    c.calibration_countdown_end = time.perf_counter() + 5.0
+                    c.last_remaining_sec = 5
+                show_notification("Switch 2 Controller", "Gyro calibration starts in 5 seconds. Please keep the controllers stationary.")
+            
+            force_ui_update()
+            return
+
+        is_active = (getattr(self, 'is_calibrating', False) or 
+                     getattr(self, 'is_mag_calibrating', False) or 
+                     getattr(self, 'is_calibration_counting_down', False) or
+                     getattr(self, 'is_mag_calibration_waiting', False))
+        
+        if is_active:
+            if getattr(self, 'is_mag_calibration_waiting', False):
+                self.is_mag_calibration_waiting = False
+                self.start_mag_calibration()
+                show_notification("Switch 2 Controller", "Magnetometer calibration started. Please rotate the controller in all directions (figure-8 pattern), and press the Calibration button again to end.")
+            elif getattr(self, 'is_mag_calibrating', False):
+                self.stop_mag_calibration()
+                self.back_button_calibration_active = False
+                show_notification("Switch 2 Controller", "Magnetometer calibration complete! Calibration data saved successfully.")
+            else:
+                self.is_calibration_counting_down = False
+                self.is_calibrating = False
+                self.is_mag_calibration_waiting = False
+                self.back_button_calibration_active = False
+                show_notification("Switch 2 Controller", "Calibration cancelled.")
+        else:
+            self.back_button_calibration_active = True
+            self.is_calibration_counting_down = True
+            self.calibration_countdown_end = time.perf_counter() + 5.0
+            self.last_remaining_sec = 5
+            show_notification("Switch 2 Controller", "Gyro calibration starts in 5 seconds. Please keep the controller stationary.")
+        
+        force_ui_update()
     
     async def connect(self):
         if (self.client is not None):
@@ -581,6 +678,29 @@ class Controller:
                 
             inputData = ControllerInputData(data, self.stick_calibration, self.second_stick_calibration)
             self.battery_voltage = inputData.battery_voltage
+            self.last_accel = inputData.accelerometer
+
+            # 9-Axis continuous sensor fusion and stabilized gyro synthesis
+            if not getattr(self, 'is_calibrating', False) and not getattr(self, 'is_mag_calibrating', False) and not getattr(self, 'is_calibration_counting_down', False) and not getattr(self, 'is_mag_calibration_waiting', False):
+                bx, by, bz = self.gyro_bias
+                raw_gx, raw_gy, raw_gz = inputData.gyroscope
+                gyro_x = raw_gx - bx
+                gyro_y = raw_gy - by
+                gyro_z = raw_gz - bz
+
+                now = time.perf_counter()
+                if getattr(self, 'last_fusion_time', 0) == 0:
+                    dt = 0.015
+                else:
+                    dt = now - self.last_fusion_time
+                self.last_fusion_time = now
+                if dt < 1e-5:
+                    dt = 0.015
+                self._last_dt = dt
+
+                ax, ay, az = inputData.accelerometer
+                mx, my, mz = inputData.magnometer
+                self._mahony_update(gyro_x, gyro_y, gyro_z, ax, ay, az, mx, my, mz, dt)
 
             btn_states = {
                 "GL": bool(inputData.buttons & 0x02000000),
@@ -609,15 +729,60 @@ class Controller:
                 (btn_states["SR_R"], getattr(CONFIG, "srr_mapping", "None"), 0x00000010)
             ]
 
+            trigger_calibration = False
             for is_pressed, action, original_bit in mapping_pairs:
                 if is_pressed:
                     if action == "Gyro": trigger_gyro = True
                     elif action == "CAPT": trigger_screenshot = True
                     elif action == "C": trigger_key_c = True
+                    elif action == "Calibration": trigger_calibration = True
                     elif action == "None":
                         inputData.buttons |= original_bit
                     elif action in SWITCH_BUTTONS:
                         inputData.buttons |= SWITCH_BUTTONS[action]
+
+            if trigger_calibration and not getattr(self, 'prev_calibration', False):
+                self._handle_calibration_button_pressed()
+            self.prev_calibration = trigger_calibration
+
+            if getattr(self, 'is_calibration_counting_down', False):
+                inputData.left_stick = (0.0, 0.0)
+                inputData.right_stick = (0.0, 0.0)
+                inputData.gyroscope = (0.0, 0.0, 0.0)
+                inputData.accelerometer = (0.0, 0.0, 0.0)
+                
+                remaining = int(math.ceil(self.calibration_countdown_end - time.perf_counter()))
+                if remaining <= 0:
+                    remaining = 0
+                
+                vc = getattr(self, 'virtual_controller', None)
+                is_merged = vc and len(vc.controllers) == 2
+                is_gyro_active = not is_merged or getattr(self, 'gyro_active', False)
+                
+                if getattr(self, 'last_remaining_sec', None) != remaining and remaining > 0:
+                    self.last_remaining_sec = remaining
+                    if is_gyro_active:
+                        show_notification("Switch 2 Controller", f"Gyro calibration starts in {remaining} seconds. Please keep the controller stationary.")
+
+                if time.perf_counter() >= self.calibration_countdown_end:
+                    
+                    self.is_calibration_counting_down = False
+                    self.start_calibration()
+                    if is_gyro_active:
+                        show_notification("Switch 2 Controller", "Gyro calibration in progress... Please keep the controller stationary.")
+                
+                if self.input_report_callback is not None:
+                    self.input_report_callback(inputData, self)
+                return
+
+            if getattr(self, 'is_mag_calibration_waiting', False):
+                inputData.left_stick = (0.0, 0.0)
+                inputData.right_stick = (0.0, 0.0)
+                inputData.gyroscope = (0.0, 0.0, 0.0)
+                inputData.accelerometer = (0.0, 0.0, 0.0)
+                if self.input_report_callback is not None:
+                    self.input_report_callback(inputData, self)
+                return
 
             raw_left_pressed  = bool(inputData.buttons & 0x01)
             raw_up_pressed    = bool(inputData.buttons & 0x02)
@@ -669,6 +834,108 @@ class Controller:
                 
                 self.simulate_gyro_mouse(inputData, effective_gyro_trigger, effective_zr, effective_zl)
 
+
+            # If Steam roll compensation is enabled, apply built-in anti-roll projection to gyroscope and accelerometer
+            if not getattr(self, 'is_calibrating', False) and not getattr(self, 'is_mag_calibrating', False):
+                if getattr(CONFIG, 'steam_roll_compensation', False):
+                    # 1. Extract current gyroscope and accelerometer vectors
+                    gx, gy, gz = inputData.gyroscope
+                    ax, ay, az = inputData.accelerometer
+                    
+                    # 2. Calculate decoupled Pitch and Yaw using the built-in world-space projection algorithm
+                    if getattr(self, 'hold_mode', 'Vertical') == 'Horizontal':
+                        g_local = (0.0, gy, gz)
+                    else:
+                        g_local = (gx, 0.0, gz)
+                    
+                    g_world_abs = quaternion_rotate_vector(self.orientation, g_local)
+                    
+                    if self.is_pro_controller() or getattr(self, 'hold_mode', 'Vertical') == 'Vertical':
+                        f_local = (0, 1, 0)
+                    else:
+                        f_local = (1, 0, 0)
+                    
+                    f_world = quaternion_rotate_vector(self.orientation, f_local)
+                    
+                    fh_x, fh_y = f_world[0], f_world[1]
+                    fh_mag = math.sqrt(fh_x**2 + fh_y**2)
+                    if fh_mag < 0.01:
+                        r_h = (1, 0, 0)
+                    else:
+                        r_h = (fh_y / fh_mag, -fh_x / fh_mag, 0)
+                    
+                    decoupled_pitch = g_world_abs[0] * r_h[0] + g_world_abs[1] * r_h[1]
+                    decoupled_yaw = g_world_abs[2]
+                    
+                    # 3. Calculate roll angle directly from local gravity vector to completely avoid Euler gimbal lock
+                    q = self.orientation
+                    q_inv = (q[0], -q[1], -q[2], -q[3])
+                    gx_g, gy_g, gz_g = quaternion_rotate_vector(q_inv, (0.0, 0.0, -1.0))
+                    
+                    # 4. Apply accelerometer roll compensation using quaternion rotation in synchronization
+                    if getattr(self, 'hold_mode', 'Vertical') == 'Horizontal':
+                        # Horizontal mode: Roll is around X-axis (in Y-Z plane)
+                        roll_rad = math.atan2(-gy_g, -gz_g)
+                        # Construct roll quaternion (rotation around local X-axis)
+                        q_roll = (math.cos(roll_rad / 2.0), math.sin(roll_rad / 2.0), 0.0, 0.0)
+                        
+                        ax_comp, ay_comp, az_comp = quaternion_rotate_vector(q_roll, (ax, ay, az))
+                        
+                        # Overwrite gyroscope with mapped decoupled values
+                        if self.is_joycon_right():
+                            gx_comp = 0.0
+                            gy_comp = decoupled_pitch
+                            gz_comp = decoupled_yaw
+                        else:
+                            gx_comp = 0.0
+                            gy_comp = -decoupled_pitch
+                            gz_comp = decoupled_yaw
+                    else:
+                        # Vertical / Pro Controller mode: Roll is around Y-axis (in X-Z plane)
+                        roll_rad = math.atan2(gx_g, -gz_g)
+                        # Construct roll quaternion (rotation around local Y-axis)
+                        q_roll = (math.cos(roll_rad / 2.0), 0.0, math.sin(roll_rad / 2.0), 0.0)
+                        
+                        ax_comp, ay_comp, az_comp = quaternion_rotate_vector(q_roll, (ax, ay, az))
+                        
+                        # Overwrite gyroscope with mapped decoupled values
+                        gx_comp = decoupled_pitch
+                        gy_comp = 0.0
+                        gz_comp = decoupled_yaw
+                    
+                    # 5. Overwrite inputData with compensated values
+                    inputData.gyroscope = (gx_comp, gy_comp, gz_comp)
+                    inputData.accelerometer = (ax_comp, ay_comp, az_comp)
+
+            # Apply flat static deadzone (base_dz) to the final virtual controller gyroscope data
+            if not getattr(self, 'is_calibrating', False) and not getattr(self, 'is_mag_calibrating', False):
+                base_dz = float(getattr(CONFIG, 'virtual_gyro_soft_deadzone', 2.0))
+                if base_dz > 0.0:
+                    gx_dz, gy_dz, gz_dz = inputData.gyroscope
+                    
+                    if getattr(self, 'hold_mode', 'Vertical') == 'Horizontal':
+                        # Apply base deadzone to Yaw (index 2)
+                        if gz_dz > base_dz: gz_dz -= base_dz
+                        elif gz_dz < -base_dz: gz_dz += base_dz
+                        else: gz_dz = 0.0
+                        
+                        # Apply base deadzone to Pitch (index 1)
+                        if gy_dz > base_dz: gy_dz -= base_dz
+                        elif gy_dz < -base_dz: gy_dz += base_dz
+                        else: gy_dz = 0.0
+                    else:
+                        # Apply base deadzone to Yaw (index 2)
+                        if gz_dz > base_dz: gz_dz -= base_dz
+                        elif gz_dz < -base_dz: gz_dz += base_dz
+                        else: gz_dz = 0.0
+                        
+                        # Apply base deadzone to Pitch (index 0)
+                        if gx_dz > base_dz: gx_dz -= base_dz
+                        elif gx_dz < -base_dz: gx_dz += base_dz
+                        else: gx_dz = 0.0
+                    
+                    inputData.gyroscope = (gx_dz, gy_dz, gz_dz)
+
             if self.input_report_callback is not None:
                 self.input_report_callback(inputData, self)
 
@@ -696,6 +963,7 @@ class Controller:
         self.q_world_offset = None
         self.gyro_moving_envelope = 0.0
         self.last_fusion_time = time.perf_counter()
+        self.prev_q = None
 
     def _mahony_update(self, gx, gy, gz, ax, ay, az, mx, my, mz, dt):
         current_mode = getattr(CONFIG, "gyro_mode", "World")
@@ -737,13 +1005,16 @@ class Controller:
             self.ahrs.update_no_magnetometer(gyro_arr, accel_blended, float(dt))
             
         # 3. Dynamic On-the-fly Gyro Bias Calibration (Background PI loop)
-        # Learn gyro bias only during absolute stationary states to compensate for temperature drift
+        # To completely eliminate pullback/drift when stopping or still, we immediately cut off
+        # the correction (integration) when movement stops (envelope < 0.25 or gyro_mag < 45)
+        # OR when the controller is accelerating/decelerating (accel_err_total >= 150 LSB).
+        # Any dynamic compensation is performed strictly during steady, non-accelerating movement states.
         raw_mag = math.sqrt(ax*ax + ay*ay + az*az)
         G_REF = 16384.0
         accel_err_total = abs(raw_mag - G_REF)
         gyro_mag = math.sqrt(gx**2 + gy**2 + gz**2)
         
-        if accel_err_total < 800 and gyro_mag < 200 and getattr(self, 'gyro_moving_envelope', 0.0) < 1.0:
+        if accel_err_total < 150 and gyro_mag >= 45 and getattr(self, 'gyro_moving_envelope', 0.0) >= 0.25:
             g_est = self.ahrs.gravity
             v_pred = (g_est[0], g_est[1], g_est[2])
             v_meas = vector_normalize((ax, ay, az))
@@ -844,6 +1115,17 @@ class Controller:
                         CONFIG.gyro_bias_r = list(self.gyro_bias)
                     CONFIG.save_config()
 
+                    if getattr(self, 'back_button_calibration_active', False):
+                        vc = getattr(self, 'virtual_controller', None)
+                        is_merged = vc and len(vc.controllers) == 2
+                        is_gyro_active = not is_merged or getattr(self, 'gyro_active', False)
+                        
+                        if is_gyro_active:
+                            self.is_mag_calibration_waiting = True
+                            show_notification("Switch 2 Controller", "Gyro calibration complete! Press the Calibration button again to start Magnetometer calibration.")
+                        else:
+                            self.back_button_calibration_active = False
+
         if getattr(self, 'is_mag_calibrating', False):
             mx, my, mz = inputData.magnometer
             self.mag_min[0] = min(self.mag_min[0], mx)
@@ -876,15 +1158,17 @@ class Controller:
         raw_gx, raw_gy, raw_gz = inputData.gyroscope
         ax, ay, az = inputData.accelerometer
         
-        # Standstill Auto-Calibration: gently creep self.gyro_bias when absolutely still.
-        # This completely resolves thermal drift and sensor bias offset without manual recalibration.
+        # Continuous Desk-Only Auto-Calibration:
+        # Bias creep is instantly cut off (alpha = 0) whenever the controller is hand-held
+        # or during movement/stopping states to prevent any cursor pullback.
+        # It is allowed to slowly run (alpha = 0.001) ONLY when the controller is placed
+        # absolutely still on a flat desk surface (moving_env < 0.05).
         accel_mag = math.sqrt(ax**2 + ay**2 + az**2)
         accel_err = abs(accel_mag - 16384.0)
         gyro_sub_mag = math.sqrt((raw_gx - bx)**2 + (raw_gy - by)**2 + (raw_gz - bz)**2)
         moving_env = getattr(self, 'gyro_moving_envelope', 0.0)
         
-        if accel_err < 800 and gyro_sub_mag < 150 and moving_env < 0.15:
-            # Creep rate (alpha = 0.001) - very slow and smooth (time constant of ~4 seconds)
+        if accel_err < 100 and gyro_sub_mag < 15 and moving_env < 0.05:
             alpha = 0.001
             self.gyro_bias = (
                 (1.0 - alpha) * self.gyro_bias[0] + alpha * raw_gx,
@@ -897,7 +1181,73 @@ class Controller:
         gyro_y = raw_gy - by
         gyro_z = raw_gz - bz
 
+        if getattr(CONFIG, 'stabilized_gyro', False):
+            gyro_scale = 14.285714 if self.is_pro_controller() else 16.384
+            gyro_x -= math.degrees(self.gyro_bias_integral[0]) * gyro_scale
+            gyro_y -= math.degrees(self.gyro_bias_integral[1]) * gyro_scale
+            gyro_z -= math.degrees(self.gyro_bias_integral[2]) * gyro_scale
+
         inputData.gyroscope = (gyro_x, gyro_y, gyro_z)
+
+        # Always extract decoupled movements and calculate soft deadzones
+        # so that they can be applied to both the gyro mouse and virtual controller data.
+        current_mode = getattr(CONFIG, "gyro_mode", "World")
+        self.soft_dz_h = 0.0
+        self.soft_dz_v = 0.0
+        self.eff_h_final = 0.0
+        self.eff_v_final = 0.0
+
+        if current_mode in ["World", "Yaw"]:
+            if self.is_pro_controller() or self.hold_mode == "Vertical":
+                g_local = (gyro_x, 0.0, gyro_z)
+            else:
+                g_local = (0.0, gyro_y, gyro_z)
+            
+            if getattr(self, 'q_world_offset', None) is None:
+                q_abs = self.orientation
+                f_world = quaternion_rotate_vector(q_abs, (0, 1, 0))
+                yaw_angle = math.atan2(f_world[0], f_world[1])
+                self.q_world_offset = -yaw_angle
+            
+            g_world_abs = quaternion_rotate_vector(self.orientation, g_local)
+            
+            if self.is_pro_controller() or self.hold_mode == "Vertical":
+                f_local = (0, 1, 0)
+            else:
+                f_local = (1, 0, 0)
+            
+            f_world = quaternion_rotate_vector(self.orientation, f_local)
+            
+            fh_x, fh_y = f_world[0], f_world[1]
+            fh_mag = math.sqrt(fh_x**2 + fh_y**2)
+            if fh_mag < 0.01:
+                r_h = (1, 0, 0)
+            else:
+                r_h = (fh_y / fh_mag, -fh_x / fh_mag, 0)
+            
+            eff_h = -g_world_abs[2]
+            eff_v = g_world_abs[0] * r_h[0] + g_world_abs[1] * r_h[1]
+            
+            gyro_scale = 14.285714 if self.is_pro_controller() else 16.384
+            omega = math.sqrt(eff_h**2 + eff_v**2) / gyro_scale
+            
+            if not hasattr(self, 'gyro_moving_envelope'):
+                self.gyro_moving_envelope = 0.0
+            self.gyro_moving_envelope = 0.88 * self.gyro_moving_envelope + 0.12 * omega
+            
+            base_dz = 2.0 if self.is_joycon() else 1.0
+            
+            # Decay deadzone to 0 quickly (at 3.0 dps) to prevent asymmetric deadzone subtraction during slow turnarounds
+            soft_dz = base_dz * (1.0 - min(1.0, self.gyro_moving_envelope / 3.0))
+            
+            self.soft_dz_h = soft_dz
+            self.soft_dz_v = soft_dz
+            
+            if eff_h > soft_dz: self.eff_h_final = eff_h - soft_dz
+            elif eff_h < -soft_dz: self.eff_h_final = eff_h + soft_dz
+            
+            if eff_v > soft_dz: self.eff_v_final = eff_v - soft_dz
+            elif eff_v < -soft_dz: self.eff_v_final = eff_v + soft_dz
         
         rx, ry = inputData.right_stick
 
@@ -920,12 +1270,23 @@ class Controller:
         self.gr_was_pressed = trigger_pressed
 
         if self.gyro_mouse_enabled:
-            if self.is_pro_controller():
-                rx, ry = inputData.right_stick
-            elif self.is_joycon():
-                rx, ry = getattr(self, '_shared_right_stick', inputData.right_stick)
+            # Dynamically extract and rotate stick inputs for Stick Assist
+            is_merged = getattr(self, "is_merged", False)
+            if is_merged:
+                # In merge mode, restrict stick assist to the right stick
+                sx, sy = getattr(self, '_shared_right_stick', inputData.right_stick)
             else:
-                rx, ry = inputData.right_stick
+                # In single mode
+                if self.is_joycon_left():
+                    sx, sy = inputData.left_stick
+                    if getattr(self, 'hold_mode', 'Vertical') == 'Horizontal':
+                        sx, sy = -sy, sx
+                elif self.is_joycon_right():
+                    sx, sy = inputData.right_stick
+                    if getattr(self, 'hold_mode', 'Vertical') == 'Horizontal':
+                        sx, sy = sy, -sx
+                else:
+                    sx, sy = inputData.right_stick
             
             target_vx = 0.0
             target_vy = 0.0
@@ -975,89 +1336,9 @@ class Controller:
                 self.gyro_target_vy = 0.0
                 return
             
-            gyro_x, gyro_y, gyro_z = inputData.gyroscope
             gyro_deadzone = 0.2 
             
             if current_mode in ["World", "Yaw"]:
-                # Perform sensor fusion
-                if self.last_fusion_time == 0: dt = 0.015
-                else: dt = now - self.last_fusion_time
-                self.last_fusion_time = now
-                
-                ax, ay, az = inputData.accelerometer
-                mx, my, mz = inputData.magnometer
-                
-                self._mahony_update(gyro_x, gyro_y, gyro_z, ax, ay, az, mx, my, mz, dt)
-                
-                # Transform local gyro to world space (filtering out roll crosstalk)
-                # q rotates local to world
-                if self.is_pro_controller() or self.hold_mode == "Vertical":
-                    g_local = (gyro_x, 0.0, gyro_z)
-                else:
-                    g_local = (0.0, gyro_y, gyro_z)
-                
-                # effective orientation logic:
-                # We want Pitch/Roll to remain absolute (relative to gravity), 
-                # but Yaw to be relative to activation.
-                if self.q_world_offset is None:
-                    q_abs = self.orientation
-                    # Forward in world space right now
-                    f_world = quaternion_rotate_vector(q_abs, (0, 1, 0)) # Assuming Y is forward locally
-                    # Angle to world Y (0, 1, 0) in XY plane
-                    yaw_angle = math.atan2(f_world[0], f_world[1])
-                    self.q_world_offset = -yaw_angle
-                
-                # 1. Calculate absolute world-space gyro
-                g_world_abs = quaternion_rotate_vector(self.orientation, g_local)
-                
-                # 2. Determine current pointing direction in world space
-                # Forward axis depends on how the controller is held
-                if self.is_pro_controller() or self.hold_mode == "Vertical":
-                    f_local = (0, 1, 0) # Top of controller is Forward
-                else:
-                    f_local = (1, 0, 0) # Side of Joycon is Forward in H-mode
-                
-                f_world = quaternion_rotate_vector(self.orientation, f_local)
-                
-                # 3. Calculate a horizontal "Right" axis perpendicular to pointing
-                # This is the axis around which "Pitching" (Up/Down) occurs
-                fh_x, fh_y = f_world[0], f_world[1]
-                fh_mag = math.sqrt(fh_x**2 + fh_y**2)
-                if fh_mag < 0.01:
-                    r_h = (1, 0, 0) # Fallback if pointing vertical
-                else:
-                    # Right = Forward_h x Up = (fh_y/mag, -fh_x/mag, 0)
-                    r_h = (fh_y / fh_mag, -fh_x / fh_mag, 0)
-                
-                # 4. Extract decoupled movements
-                # Horizontal: Rotation around World Z (Yaw)
-                eff_h = -g_world_abs[2]
-                
-                # Vertical: Rotation around the dynamic Right axis (Pitch)
-                # This mathematically eliminates the "slope effect".
-                eff_v = g_world_abs[0] * r_h[0] + g_world_abs[1] * r_h[1]
-                
-                # Update moving intensity envelope in physical dps units using a leaky integrator (coeff=0.88)
-                gyro_scale = 14.285714 if self.is_pro_controller() else 16.384
-                omega = math.sqrt(eff_h**2 + eff_v**2) / gyro_scale
-                self.gyro_moving_envelope = 0.88 * self.gyro_moving_envelope + 0.12 * omega
-                
-                # Dynamic Soft Deadzone: 
-                # Joy-Con has a base deadzone of 7.0 LSB when still, Pro Controller has 1.0 LSB.
-                # Calculations are in raw LSB units, while self.gyro_moving_envelope is in physical dps.
-                base_dz = 2.0 if self.is_joycon() else 1.0
-
-                # Decay deadzone to 0 quickly (at 3.0 dps) to prevent asymmetric deadzone subtraction during slow turnarounds
-                soft_dz = base_dz * (1.0 - min(1.0, self.gyro_moving_envelope / 3.0))
-                
-                eff_h_final = 0
-                if eff_h > soft_dz: eff_h_final = eff_h - soft_dz
-                elif eff_h < -soft_dz: eff_h_final = eff_h + soft_dz
-                
-                eff_v_final = 0
-                if eff_v > soft_dz: eff_v_final = eff_v - soft_dz
-                elif eff_v < -soft_dz: eff_v_final = eff_v + soft_dz
-                
                 sensitivity = getattr(CONFIG, "gyro_sensitivity", 0.3)
                 accel_factor = 0.002
                 
@@ -1069,8 +1350,8 @@ class Controller:
                 # Decoupled gyro mouse movement with 20ms click stabilization
                 # Bypasses gyro coordinate changes for 20ms after click press-down to eliminate finger shake.
                 if (now - getattr(self, "last_click_event_time", 0.0)) >= 0.02:
-                    target_vx += eff_h_final * sensitivity * accel_factor
-                    target_vy += eff_v_final * v_sign * sensitivity * accel_factor 
+                    target_vx += self.eff_h_final * sensitivity * accel_factor
+                    target_vy += self.eff_v_final * v_sign * sensitivity * accel_factor 
             elif current_mode == "Roll":
                 ax, ay, az = inputData.accelerometer
                 
@@ -1101,15 +1382,15 @@ class Controller:
                 stick_deadzone = 0.05 
                 stick_sens = getattr(CONFIG, "stick_mouse_sensitivity", 20.0) * 0.66
                 
-                stick_magnitude = math.sqrt(rx**2 + ry**2)
+                stick_magnitude = math.sqrt(sx**2 + sy**2)
                 
                 if stick_magnitude > stick_deadzone:
                     normalized_mag = (stick_magnitude - stick_deadzone) / (1.0 - stick_deadzone)
-                    normalized_rx = (rx / stick_magnitude) * normalized_mag
-                    normalized_ry = (ry / stick_magnitude) * normalized_mag
+                    normalized_sx = (sx / stick_magnitude) * normalized_mag
+                    normalized_sy = (sy / stick_magnitude) * normalized_mag
                     
-                    target_vx += normalized_rx * stick_sens
-                    target_vy += normalized_ry * -stick_sens
+                    target_vx += normalized_sx * stick_sens
+                    target_vy += normalized_sy * -stick_sens
 
             self.gyro_target_vx = target_vx
             self.gyro_target_vy = target_vy

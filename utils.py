@@ -145,3 +145,20 @@ def set_startup(enabled: bool):
     except Exception as e:
         print(f"Error setting startup: {e}")
         return False
+
+show_notification_callback = None
+
+def show_notification(title, message):
+    global show_notification_callback
+    if show_notification_callback is not None:
+        show_notification_callback(title, message)
+    else:
+        # Fallback to console print
+        print(f"[{title}] {message}", flush=True)
+
+force_ui_update_callback = None
+
+def force_ui_update():
+    global force_ui_update_callback
+    if force_ui_update_callback is not None:
+        force_ui_update_callback()

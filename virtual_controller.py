@@ -109,6 +109,7 @@ class VirtualController:
             asyncio.run_coroutine_threadsafe(send_vibration_task(), self.loop)
 
     async def init_added_controller(self, controller: Controller):
+        controller.virtual_controller = self
         self.loop = asyncio.get_running_loop()
         await self.update_leds()
 
@@ -395,10 +396,10 @@ class VirtualController:
             
             if self.hold_mode == "Horizontal" and not controller.is_pro_controller():
                 if controller.is_joycon_right():
-                    self.last_gx = inputData.gyroscope[1]
+                    self.last_gx = -inputData.gyroscope[1]
                     self.last_gy = inputData.gyroscope[2]
                     self.last_gz = -inputData.gyroscope[0]
-                    self.last_ax = inputData.accelerometer[1]
+                    self.last_ax = -inputData.accelerometer[1]
                     self.last_ay = inputData.accelerometer[2]
                     self.last_az = inputData.accelerometer[0]
                 else:
@@ -524,10 +525,10 @@ class VirtualController:
             # Phase 3: Gyro/Accel (Mirrored from PS4)
             if self.hold_mode == "Horizontal" and not controller.is_pro_controller():
                 if controller.is_joycon_right():
-                    self.last_gx = inputData.gyroscope[1]
+                    self.last_gx = -inputData.gyroscope[1]
                     self.last_gy = inputData.gyroscope[2]
                     self.last_gz = -inputData.gyroscope[0]
-                    self.last_ax = inputData.accelerometer[1]
+                    self.last_ax = -inputData.accelerometer[1]
                     self.last_ay = inputData.accelerometer[2]
                     self.last_az = inputData.accelerometer[0]
                 else:
