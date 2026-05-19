@@ -644,10 +644,95 @@ class ControllerWindow:
         self.discoverer_callback = None
         self.power_listener = PowerListener(self.handle_power_event)
 
+    def check_driver_installation(self):
+        if getattr(CONFIG, 'driver_installed', False):
+            return
+            
+        import winreg
+        driver_exists = False
+        try:
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\WUDF\Services\WinUHidDriver")
+            winreg.CloseKey(key)
+            driver_exists = True
+        except FileNotFoundError:
+            pass
+            
+        if driver_exists:
+            CONFIG.driver_installed = True
+            CONFIG.save_config()
+            return
+            
+        from tkinter import messagebox
+        import subprocess
+        import sys
+        import os
+        
+        answer = messagebox.askyesno(
+            "Install Virtual Controller Driver",
+            "WinUHid driver is not installed on your system.\n\nDo you want to install it now?\n(Requires administrator privileges.)"
+        )
+        
+        if answer:
+            base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+            install_bat = os.path.join(base_path, "install.bat")
+            if os.path.exists(install_bat):
+                try:
+                    progress_win = tk.Toplevel(self.root)
+                    progress_win.title("Driver Installation")
+                    progress_win.geometry("450x130+150+150")
+                    progress_win.resizable(False, False)
+                    progress_win.config(bg="#1E1E1E")
+                    progress_win.transient(self.root)
+                    progress_win.grab_set()
+                    
+                    label = tk.Label(
+                        progress_win,
+                        text="Installing WinUHid Driver...\nPlease authorize the UAC prompt if asked.",
+                        fg="white", bg="#1E1E1E",
+                        font=("Arial", 11, "bold")
+                    )
+                    label.pack(pady=40)
+                    
+                    proc = subprocess.Popen(f'"{install_bat}"', shell=True)
+                    
+                    def check_process():
+                        if proc.poll() is None:
+                            progress_win.after(500, check_process)
+                        else:
+                            progress_win.destroy()
+                            
+                            import winreg
+                            driver_installed_ok = False
+                            try:
+                                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\WUDF\Services\WinUHidDriver")
+                                winreg.CloseKey(key)
+                                driver_installed_ok = True
+                            except FileNotFoundError:
+                                pass
+                                
+                            if driver_installed_ok:
+                                CONFIG.driver_installed = True
+                                CONFIG.save_config()
+                            else:
+                                messagebox.showerror(
+                                    "Error",
+                                    "Driver installation was not completed or failed.\nSome emulator functions may not work."
+                                )
+                                
+                    progress_win.after(500, check_process)
+                    self.root.wait_window(progress_win)
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to start the installer: {e}")
+            else:
+                messagebox.showerror("Error", "Could not find install.bat. Please verify the integrity of the application files.")
+
     def init_interface(self):
         try: ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Switch 2 Controllers')
         except: pass
         self.root = tk.Tk()
+        self.root.withdraw() # Hide immediately to prevent blank window during check_driver_installation()
+        
+        self.check_driver_installation()
         
         self.calibration_overlay = CalibrationOverlay(self.root)
         import utils
@@ -657,9 +742,6 @@ class ControllerWindow:
             if getattr(self, 'discoverer_callback', None):
                 self.discoverer_callback(list(VIRTUAL_CONTROLLERS))
         utils.force_ui_update_callback = safe_ui_update
-
-        if CONFIG.start_minimized:
-            self.root.withdraw()
         try:
             photo = tk.PhotoImage(file=get_resource('images/icon.png'))
             self.root.wm_iconphoto(False, photo)
@@ -949,7 +1031,7 @@ class ControllerWindow:
         self.settings_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=5)
         row_global = tk.Frame(self.settings_frame, bg=background_color); row_global.pack(side=tk.TOP, fill=tk.X, pady=5)
         tk.Label(row_global, text="Emu Mode:", bg=background_color, fg=text_color, font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=(10, 2))
-        self.sim_mode_switch = ToggleSwitch(row_global, ["Xbox", "PS4"], ["Xbox", "PS4"], getattr(CONFIG, "simulation_mode", "Xbox"), self.update_sim_mode_setting, background_color)
+        self.sim_mode_switch = ToggleSwitch(row_global, ["Xbox", "PS4", "PS5"], ["Xbox", "PS4", "PS5"], getattr(CONFIG, "simulation_mode", "Xbox"), self.update_sim_mode_setting, background_color)
         self.sim_mode_switch.pack(side=tk.LEFT, padx=5)
         tk.Label(row_global, text="Layout:", bg=background_color, fg=text_color, font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=(20, 2))
         self.layout_switch = ToggleSwitch(row_global, ["Xbox", "Switch"], ["Xbox", "Switch"], CONFIG.abxy_mode, self.update_layout_setting, background_color)
@@ -1208,6 +1290,8 @@ class ControllerWindow:
         
         if CONFIG.start_minimized:
             self.hide_to_tray()
+        else:
+            self.root.deiconify()
             
         self.root.protocol("WM_DELETE_WINDOW", self.on_quit); self.root.mainloop()
 

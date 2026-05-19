@@ -1,8 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('resources', 'resources'), ('config.yaml', 'resources')]
-binaries = []
+datas = [('resources', 'resources'), ('config.yaml', 'resources'), ('WinUHid-main', 'WinUHid-main'), ('install_driver.ps1', '.'), ('install.bat', '.')]
+binaries = [('WinUHid.dll', '.'), ('WinUHidDevs.dll', '.')]
 hiddenimports = ['imufusion']
 tmp_ret = collect_all('vgamepad')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]

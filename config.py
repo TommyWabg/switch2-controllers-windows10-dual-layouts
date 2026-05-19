@@ -204,6 +204,7 @@ class Config:
             self.virtual_gyro_soft_deadzone = 2.0 if val else 0.0
         else:
             self.virtual_gyro_soft_deadzone = float(val)
+        self.driver_installed = config.get("driver_installed", False)
 
         logger.info(f"Config successfully loaded from {self.config_file_path}")
         
@@ -215,6 +216,8 @@ class Config:
             if os.path.exists(self.config_file_path):
                 with open(self.config_file_path, 'r', encoding='utf-8') as f:
                     data = yaml.safe_load(f) or {}
+            
+            data['driver_installed'] = self.driver_installed
             
             data['simulation_mode'] = self.simulation_mode
             data['open_when_startup'] = self.open_when_startup
