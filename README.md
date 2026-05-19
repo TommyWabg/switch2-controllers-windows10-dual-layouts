@@ -7,7 +7,7 @@ This fork is heavily optimized for Windows 10/11 users, featuring a fully intera
 * **Windows 10 Native Compatibility:** Resolved the `AttributeError: property is not available...` crash. Runs flawlessly on Windows 10 (22H2 and above). Windows 11 is still recommanded for 70Hz max bluetooth polling rate, while only 20Hz max on Windows 10 due to the lack of OS driver support for BLE protocol.
 * **Low Latency Bluetooth Mode:** The application now forces Windows Bluetooth LE into `ThroughputOptimized` mode upon connection. This drastically drops the connection interval, massively reducing native Bluetooth input delay across the board.
 * **Dynamic Emu Mode Toggle:** You can now instantly switch between Xbox 360 and PS4 (DualShock 4) emulation modes directly from the settings panel. This allows you to choose the best protocol for your specific game or platform without restarting the app.
-* **Native Motion Support (PS4 Mode):** Switching to PS4 mode enables native motion sensor reporting via the DS4 protocol. This provides enhanced compatibility for Steam Input and games that support native DualShock 4 gyro features.
+* **Native Motion Support (PS4/PS5 Mode):** Switching to PS4 or PS5 mode enables native motion sensor reporting via the DS4 or DualSense protocol. This provides enhanced compatibility for Steam Input and games that support native DualShock 4 or DualSense gyro features.
 * **On-the-Fly Layout Switching:** No more multiple executables! Instantly toggle between **Nintendo Layout** (matching physical labels) and **Xbox Layout** (standard PC positioning) directly from the UI.
 * **1000Hz Interpolation:** 1000Hz interpolation loop for ultra-smooth, jitter-free gyro motion rendering with both Switch 2 Right Joy-con and Pro Controller. **Gyro Mouse** and **Joy-con Mouse**now output smoother and lag-free movement at 1000Hz. Gyro data handed off to other external applications (such as third-party emulators) is transmitted at a consistent, high-frequency 1000Hz rate. This transmission is purely non-interpolated; rather than generating synthetic intermediate frames which could introduce latency, the app simply increases the packet delivery rate of real-time physical updates to ensure maximum accuracy and zero artificial delay.
 * **Gyro Racing Wheel Mode (Steering):** Reads the controller's absolute tilt (accelerometer) and maps it directly to the Left Analog Stick's X-axis.
@@ -20,7 +20,7 @@ This fork is heavily optimized for Windows 10/11 users, featuring a fully intera
   * **Adjustable Soft Deadzone Slider:** Added a slider for adjusting soft deadzone value for passthrough gyro data. (Soft deadzone subtracts the active deadzone value from the input magnitude. Output begins smoothly from `0.0` right at the threshold boundary, eliminating step-jump discontinuities.)
 * **Gyro Calibration:** **Calibrate Gyro** button for calculate and permanently save sensor bias, eliminating gyro drift.
 * **Magnetometer Calibration:** **Calibrate Mag** button for 9-axis accuracy. Perform a "figure-8" motion to calibrate the magnetometer (with a [quick link](https://youtu.be/J_cZnPcW-Yw?si=QWSizI49NQ_5OkA7) to a video tutorial).
-* **Custom Extra Button Remapping:** Fully remap extra buttons like `GL`, `GR`, `SL_R`, `SR_L` and `Chat` to function as gyro trigger, PS4 trackpad click, calibration trigger, or standard buttons.
+* **Custom Extra Button Remapping:** Fully remap extra buttons like `GL`, `GR`, `SL_R`, `SR_L` and `Chat` to function as gyro trigger, DualShock/DualSense trackpad click, calibration trigger, or standard buttons.
 * **Joy-con Mouse Toggle:** A new dedicated switch in the GUI to enable or disable the Joy-con mouse mode. This prevents accidental cursor movement during gameplay.
 * **Dynamic Split & Merge System:** The new **Split** and **Merge** features allow you to detach combined Joy-cons into two individual controllers or combine single Joy-cons into one unified virtual gamepad without restarting.
 * **Vertical & Horizontal Hold Modes Switch (V/H):** Added V/H switch buttons, allowing users to toggle between Vertical (standard upright) and Horizontal (sideways) hold modes for single Joy-cons.
@@ -39,15 +39,16 @@ This fork is heavily optimized for Windows 10/11 users, featuring a fully intera
 * **Operating System:** Windows 10 (22H2 or above) or Windows 11.
     * *Note:* **Windows 11 is highly recommended** for the best experience. It supports a maximum Bluetooth LE polling rate of **70Hz**, while Windows 10 is limited to **20Hz** due to the lack of OS driver support for the BLE protocol.
 * **Bluetooth Hardware:** Bluetooth 5.0 or above is required for stable connectivity and low-latency performance.
-* **Driver:** [Nefarius ViGEmBus driver](https://github.com/nefarius/ViGEmBus/releases) must be installed for virtual gamepad emulation.
+* **Driver:** [lurebat's WinUHid driver](https://github.com/lurebat/WinUHid) is required for virtual gamepad emulation (supporting Xbox, PS4, and PS5/DualSense emulation).
+    * *Auto-Installation:* The app will automatically detect if the driver is missing on first launch and guide you through a one-click installation (requires administrator privileges).
 
 ## Quick Start
 
-1. Download and install the [Nefarius ViGEmBus driver](https://github.com/nefarius/ViGEmBus/releases).
-2. Download the `.exe` from the **[Releases](https://github.com/TommyWabg/switch2-controllers-windows10-gyro/releases)** page.
-3. Launch the app **before** connecting your controller. 
-4. Hold the Sync button on your controller, or press any button if it's already paired. **Do not** pair controllers manually in Windows Bluetooth settings; the app uses automatic GATT discovery.
-5. Use the app's settings panel at the bottom to configure your preferred layout, gyro sensitivity, and custom mappings.
+1. Download the `.exe` from the **[Releases](https://github.com/TommyWabg/switch2-controllers-windows10-gyro/releases)** page.
+2. Launch the app. If the driver is not installed, a dialog will ask to install the WinUHid driver. Click **Yes** and approve the administrator UAC prompt.
+3. Once the installation completes, the setup window will close automatically and the main application will launch.
+4. Turn on your Switch 2 controller by holding the Sync button (or pressing any button if already paired). **Do not** pair controllers manually in Windows Bluetooth settings; the app uses automatic GATT discovery.
+5. Use the settings panel at the bottom of the app to configure your preferred controller layout (Xbox / PS4 / PS5), gyro sensitivity, and custom button mappings.
 
 ## Important Setting for Steam Users:
 Because this app emulates both Xbox360 and PS4 controllers, Steam Input might try to "help" by applying its own layout overrides, which can double-swap your buttons and mess up your in-game controls! 
